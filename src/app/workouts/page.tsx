@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Flag, Dumbbell, Zap } from 'lucide-react';
+import { Plus, Flag, Dumbbell, Zap, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { Button } from '@/components/ui/button';
 import { AppShell } from '@/components/layout/app-shell';
 import { ExerciseCard } from '@/components/training/exercise-card';
@@ -13,6 +14,27 @@ import { WorkoutPageSkeleton } from '@/components/ui/page-skeletons';
 import { useWorkout } from '@/hooks/use-workout';
 import { useSettings } from '@/hooks/use-settings';
 import { formatDuration } from '@/lib/calculations';
+import { db } from '@/lib/db/dexie';
+import { getWorkoutWithExercises } from '@/lib/db/repositories/workouts';
+import { CATEGORY_LABELS } from '@/types/domain';
+import type { WorkoutExerciseWithSets } from '@/types/domain';
+
+function getCategoryLabel(exercises: WorkoutExerciseWithSets[]): string {
+  const unique = [...new Set(exercises.map((e) => CATEGORY_LABELS[e.exerciseCategorySnapshot]))];
+  if (!unique.length) return 'Тренировка';
+  const label = unique.slice(0, 2).join(' + ');
+  return unique.length > 2 ? `${label} +${unique.length - 2}` : label;
+}
+
+function relativeDate(isoStr: string): string {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = new Date(isoStr.slice(0, 10) + 'T00:00:00');
+  const diff = Math.round((today.getTime() - d.getTime()) / 86400000);
+  if (diff === 0) return 'Сегодня';
+  if (diff === 1) return 'Вчера';
+  if (diff < 7) return `${diff} дня назад`;
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+}
 
 export default function WorkoutsPage() {
   const {
@@ -28,6 +50,16 @@ export default function WorkoutsPage() {
   } = useWorkout();
 
   const { settings } = useSettings();
+
+  const completedCount = useLiveQuery(
+    () => db.workouts.where('status').equals('completed').count(),
+    []
+  );
+  const lastWorkoutDetail = useLiveQuery(async () => {
+    const ws = await db.workouts.where('status').equals('completed').reverse().sortBy('startedAt');
+    if (!ws[0]) return null;
+    return getWorkoutWithExercises(ws[0].id);
+  }, []);
 
   const [addExDialogOpen, setAddExDialogOpen] = useState(false);
   const [showTimer, setShowTimer] = useState(false);
@@ -82,17 +114,45 @@ export default function WorkoutsPage() {
 
   // No active draft — show start screen
   if (!draft || !workoutWithExercises) {
+    const todayLabel = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
     return (
       <AppShell>
-        <div className="flex flex-col flex-1 items-center justify-center px-6 py-20 text-center animate-in fade-in duration-300">
-          <div className="rounded-full bg-primary/15 p-5 mb-6 ring-1 ring-primary/20">
-            <Dumbbell className="h-10 w-10 text-primary" />
+        <div className="flex flex-col max-w-md mx-auto w-full px-4 py-8 gap-5 animate-in fade-in duration-300">
+          {/* Greeting */}
+          <div>
+            <h1 className="text-2xl font-bold">Добро пожаловать</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">Сегодня, {todayLabel}</p>
           </div>
-          <h1 className="text-2xl font-bold mb-2">Workout Tracker</h1>
-          <p className="text-muted-foreground mb-8 max-w-xs text-sm leading-relaxed">
-            Ведите учёт тренировок, отслеживайте прогресс и анализируйте результаты
-          </p>
-          <Button size="lg" onClick={startWorkout} className="px-10 text-base h-12 gap-2">
+
+          {/* Last workout card */}
+          {lastWorkoutDetail && (
+            <div className="bg-card border border-border rounded-2xl p-4 space-y-2 animate-in fade-in duration-200">
+              <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Последняя тренировка</p>
+              <p className="font-semibold">{getCategoryLabel(lastWorkoutDetail.exercises)}</p>
+              <p className="text-sm text-muted-foreground">
+                {relativeDate(lastWorkoutDetail.startedAt)}
+                {lastWorkoutDetail.durationSeconds
+                  ? ` · ${formatDuration(lastWorkoutDetail.durationSeconds)}`
+                  : ''}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {lastWorkoutDetail.exercises.length} упр.
+                {' · '}
+                {lastWorkoutDetail.exercises.reduce((s, e) => s + e.sets.length, 0)} подходов
+              </p>
+            </div>
+          )}
+
+          {/* Stats */}
+          {completedCount !== undefined && completedCount > 0 && (
+            <div className="bg-secondary/30 rounded-xl px-5 py-3 flex items-center gap-2">
+              <span className="text-2xl font-bold">{completedCount}</span>
+              <span className="text-sm text-muted-foreground">тренировок завершено</span>
+            </div>
+          )}
+
+          {/* CTA */}
+          <Button size="lg" onClick={startWorkout} className="h-12 gap-2 text-base">
             <Zap className="h-5 w-5" />
             Начать тренировку
           </Button>

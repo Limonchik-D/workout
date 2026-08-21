@@ -24,7 +24,7 @@ export default function CalendarPage() {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [selectedWorkout, setSelectedWorkout] = useState<WorkoutWithExercises | null>(null);
+  const [selectedWorkouts, setSelectedWorkouts] = useState<WorkoutWithExercises[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   const completedWorkouts = useLiveQuery(
@@ -36,12 +36,11 @@ export default function CalendarPage() {
   const allSets = useLiveQuery(() => db.sets.toArray(), []);
 
   const workoutDays = useMemo(() => {
-    const map = new Map<string, Workout>();
+    const map = new Map<string, Workout[]>();
     (completedWorkouts ?? []).forEach((w) => {
       const day = w.startedAt.slice(0, 10);
-      if (!map.has(day) || new Date(w.startedAt) > new Date(map.get(day)!.startedAt)) {
-        map.set(day, w);
-      }
+      const arr = map.get(day) ?? [];
+      map.set(day, [...arr, w].sort((a, b) => a.startedAt.localeCompare(b.startedAt)));
     });
     return map;
   }, [completedWorkouts]);
@@ -75,20 +74,22 @@ export default function CalendarPage() {
 
   const handleDayClick = async (day: number) => {
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const workout = workoutDays.get(dateStr);
-    if (!workout) { setSelectedDate(null); setSelectedWorkout(null); return; }
+    const dayWorkouts = workoutDays.get(dateStr);
+    if (!dayWorkouts?.length) { setSelectedDate(null); setSelectedWorkouts([]); return; }
     setSelectedDate(dateStr);
     setLoadingDetail(true);
-    const detail = await getWorkoutWithExercises(workout.id);
-    setSelectedWorkout(detail ?? null);
+    const details = await Promise.all(dayWorkouts.map((w) => getWorkoutWithExercises(w.id)));
+    setSelectedWorkouts(details.filter((d): d is WorkoutWithExercises => d != null));
     setLoadingDetail(false);
   };
 
   const prevMonth = () => {
+    setSelectedDate(null); setSelectedWorkouts([]);
     if (month === 0) { setYear((y) => y - 1); setMonth(11); }
     else setMonth((m) => m - 1);
   };
   const nextMonth = () => {
+    setSelectedDate(null); setSelectedWorkouts([]);
     if (month === 11) { setYear((y) => y + 1); setMonth(0); }
     else setMonth((m) => m + 1);
   };
@@ -152,15 +153,16 @@ export default function CalendarPage() {
                   onClick={() => handleDayClick(day)}
                   className={cn(
                     'h-10 flex flex-col items-center justify-center text-sm transition-colors rounded-lg mx-0.5 my-0.5',
+                    !isSelected && !isToday && !hasWorkout && 'text-muted-foreground hover:bg-secondary/40',
+                    !isSelected && !isToday && hasWorkout && 'hover:bg-primary/20',
                     isToday && !isSelected && 'font-bold text-primary',
-                    isSelected && 'bg-primary text-primary-foreground',
-                    !isSelected && hasWorkout && 'hover:bg-primary/20',
-                    !isSelected && !hasWorkout && 'hover:bg-secondary/40 text-muted-foreground'
+                    isToday && !isSelected && hasWorkout && 'bg-primary/10',
+                    isSelected && 'bg-primary text-primary-foreground font-semibold'
                   )}
                 >
                   <span>{day}</span>
                   {hasWorkout && !isSelected && (
-                    <span className="h-1 w-1 rounded-full bg-primary mt-0.5" />
+                    <span className={cn('h-1 w-1 rounded-full mt-0.5', isToday ? 'bg-primary' : 'bg-primary/60')} />
                   )}
                 </button>
               );
@@ -197,61 +199,58 @@ export default function CalendarPage() {
 
         {/* Day detail */}
         {selectedDate && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <div className="space-y-3 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between px-1">
+              <h3 className="font-semibold text-sm">
+                {new Date(selectedDate + 'T12:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
+              </h3>
+              {selectedWorkouts.length > 1 && (
+                <span className="text-xs text-muted-foreground">{selectedWorkouts.length} тренировки</span>
+              )}
+            </div>
+
             {loadingDetail ? (
-              <div className="space-y-3 py-2">
+              <div className="space-y-2">
                 {[1, 2].map((i) => (
-                  <div key={i} className="space-y-1.5">
-                    <div className="h-4 bg-muted rounded animate-pulse w-36" />
-                    <div className="flex gap-1.5">
-                      {[1, 2, 3].map((j) => (
-                        <div key={j} className="h-7 w-20 bg-muted rounded animate-pulse" />
-                      ))}
-                    </div>
+                  <div key={i} className="bg-card border border-border rounded-xl p-4 space-y-2">
+                    <div className="h-4 bg-muted rounded animate-pulse w-32" />
+                    <div className="h-3 bg-muted rounded animate-pulse w-20" />
                   </div>
                 ))}
               </div>
-            ) : selectedWorkout ? (
-              <>
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold">
-                    {new Date(selectedDate + 'T12:00:00').toLocaleDateString('ru-RU', {
-                      day: 'numeric', month: 'long',
-                    })}
-                  </h3>
-                  {selectedWorkout.durationSeconds && (
-                    <span className="text-sm text-muted-foreground">
-                      {formatDuration(selectedWorkout.durationSeconds)}
-                    </span>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  {selectedWorkout.exercises.map((ex) => (
-                    <div key={ex.id} className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">{ex.exerciseNameSnapshot}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {CATEGORY_LABELS[ex.exerciseCategorySnapshot]}
-                        </span>
+            ) : selectedWorkouts.length > 0 ? (
+              <div className="space-y-2">
+                {selectedWorkouts.map((w) => {
+                  const totalSets = w.exercises.reduce((s, e) => s + e.sets.length, 0);
+                  const volume = Math.round(w.exercises.reduce((s, e) => s + calcVolume(e.sets), 0));
+                  const cats = [...new Set(w.exercises.map((e) => CATEGORY_LABELS[e.exerciseCategorySnapshot]))];
+                  const catLabel = cats.slice(0, 2).join(' + ') + (cats.length > 2 ? ` +${cats.length - 2}` : '');
+                  return (
+                    <div key={w.id} className="bg-card border border-border rounded-xl p-4 space-y-3">
+                      <div>
+                        <p className="font-medium text-sm">{catLabel || 'Тренировка'}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {w.durationSeconds ? `${formatDuration(w.durationSeconds)} · ` : ''}
+                          {totalSets} подходов · {volume.toLocaleString('ru')} кг
+                        </p>
                       </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {ex.sets.map((s, i) => (
-                          <span
-                            key={s.id}
-                            className="text-xs bg-secondary/40 rounded-md px-2 py-1"
-                          >
-                            {i + 1}. {s.weight} кг × {s.reps}
-                          </span>
-                        ))}
+                      <div className="space-y-1.5">
+                        {w.exercises.map((ex) => {
+                          const maxW = ex.sets.reduce((m, s) => Math.max(m, s.weight), 0);
+                          return (
+                            <div key={ex.id} className="flex items-center justify-between">
+                              <span className="text-sm text-foreground/80">{ex.exerciseNameSnapshot}</span>
+                              <span className="text-xs text-muted-foreground tabular-nums">
+                                {ex.sets.length} × {maxW} кг
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                  ))}
-                </div>
-                <div className="text-xs text-muted-foreground pt-1">
-                  Объём: {selectedWorkout.exercises.reduce((s, e) => s + calcVolume(e.sets), 0)} кг ·{' '}
-                  {selectedWorkout.exercises.reduce((s, e) => s + e.sets.length, 0)} подходов
-                </div>
-              </>
+                  );
+                })}
+              </div>
             ) : (
               <p className="text-muted-foreground text-sm text-center py-4">Нет данных</p>
             )}

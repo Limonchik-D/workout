@@ -34,7 +34,7 @@ export function ExerciseCard({
   onDeleteSet,
   onRemove,
   onStartTimer,
-  defaultExpanded = true,
+  defaultExpanded = false,
 }: ExerciseCardProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
